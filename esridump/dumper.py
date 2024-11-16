@@ -466,70 +466,8 @@ class EsriDumper(object):
                 "Object ID field not returned in queries for deduplication")
         # Use geospatial queries when none of the ID-based methods will work
         return DumperMode.GEO_QUERIES, (oid_field_name,), oid_field_returned
+
  
-    def get_page_args(self, mode, rest):
-        page_size = self.get_page_size()
-        query_fields = self._fields
-        page_args = []
-        if mode is DumperMode.RESULT_OFFSET:
-            start_with, row_count, query_fields_pagination_support = rest
-            if not query_fields_pagination_support:
-                query_fields = None
-            for offset in range(start_with, row_count, page_size):
-                query_args = self._build_query_args({
-                    'resultOffset': offset,
-                    'resultRecordCount': page_size,
-                    'where': '1=1',
-                    'geometryPrecision': self._precision,
-                    'returnGeometry': self._request_geometry,
-                    'outSR': self._outSR,
-                    'outFields': ','.join(query_fields or ['*']),
-                    'f': self._json_arg,
-                })
-                page_args.append(query_args)
-        elif mode is DumperMode.OID_WHERE_CLAUSE:
-            oid_field_name, done_till, oid_max = rest
-            for page_min in range(done_till, oid_max, page_size):
-                page_max = min(page_min + page_size, oid_max)
-                query_args = self._build_query_args({
-                    'where': '{} > {} AND {} <= {}'.format(
-                        oid_field_name,
-                        page_min,
-                        oid_field_name,
-                        page_max,
-                    ),
-                    'geometryPrecision': self._precision,
-                    'returnGeometry': self._request_geometry,
-                    'outSR': self._outSR,
-                    'outFields': ','.join(query_fields or ['*']),
-                    'f': self._json_arg,
-                })
-                page_args.append(query_args)
-        elif mode is DumperMode.OID_ENUMERATION:
-            oid_field_name, oids = rest
-            for i in range(0, len(oids), page_size):
-                oid_chunk = oids[i:i+page_size]
-                page_min = oid_chunk[0]
-                page_max = oid_chunk[-1]
-                query_args = self._build_query_args({
-                    'where': '{} >= {} AND {} <= {}'.format(
-                        oid_field_name,
-                        page_min,
-                        oid_field_name,
-                        page_max,
-                    ),
-                    'geometryPrecision': self._precision,
-                    'returnGeometry': self._request_geometry,
-                    'outSR': self._outSR,
-                    'outFields': ','.join(query_fields or ['*']),
-                    'f': self._json_arg,
-                })
-                page_args.append(query_args)
-        else:
-            raise Exception(f'Unexpected mode for prefetching queries: {mode.name}') 
-
-        return page_args
-
     def run_query(self, query_url, headers, query_args, verb='POST'):
         download_exception = None
         data = None
@@ -575,6 +513,18 @@ class EsriDumper(object):
         features = data.get('features')
         return features
 
+    def get_pager(self, mode, *rest):
+        if mode is DumperMode.RESULT_OFFSET:
+            return OffsetPager(self, *rest)
+
+        if mode is DumperMode.OID_WHERE_CLAUSE:
+            return OIDWherePager(self, *rest)
+
+        if mode is DumperMode.OID_ENUMERATION:
+            return OIDEnumerationPager(self, *rest)
+
+        raise Exception(f'Unexpected mode for prefetching queries: {mode.name}') 
+
 
     def __iter__(self):
         metadata = self.get_metadata()
@@ -601,13 +551,12 @@ class EsriDumper(object):
                     yield feature
             return
 
-        page_args = self.get_page_args(mode, rest)
-        self._logger.info(
-            "Built {} requests using {} method".format(len(page_args), mode.name))
+        args_pager = self.get_pager(mode, *rest)
+        self._logger.info(f"Expecting {args_pager.length()} requests using {mode.name} method")
 
         query_url = self._build_url('/query')
         headers = self._build_headers()
-        for query_args in page_args:
+        for query_args in args_pager:
             features = self.run_query(query_url, headers, query_args)
             for feature in features:
                 if self._update_state:
@@ -618,3 +567,102 @@ class EsriDumper(object):
                     yield esri2geojson(feature)
                 else:
                     yield feature
+ 
+
+def num_chunks(frm, to, csize):
+    count = (to - frm) // csize
+    rem   = (to - frm) % csize
+    if rem != 0:
+        count += 1
+    return count
+
+class OffsetPager:
+    def __init__(self, dumper, start_with, row_count, query_fields_pagination_support):
+        self.dumper = dumper
+        self.page_size = dumper.get_page_size()
+        self.query_fields = dumper._fields
+
+        self.start_with = start_with
+        self.row_count = row_count
+        if not query_fields_pagination_support:
+            self.query_fields = None
+
+    def length(self):
+        return num_chunks(self.start_with, self.row_count, self.page_size)
+
+    def __iter__(self):
+        for offset in range(self.start_with, self.row_count, self.page_size):
+            yield self.dumper._build_query_args({
+                'resultOffset': offset,
+                'resultRecordCount': self.page_size,
+                'where': '1=1',
+                'geometryPrecision': self.dumper._precision,
+                'returnGeometry': self.dumper._request_geometry,
+                'outSR': self.dumper._outSR,
+                'outFields': ','.join(self.query_fields or ['*']),
+                'f': self.dumper._json_arg,
+            })
+
+
+class OIDWherePager:
+    def __init__(self, dumper, oid_field_name, done_till, oid_max):
+        self.dumper = dumper
+        self.page_size = dumper.get_page_size()
+        self.query_fields = dumper._fields
+
+        self.oid_field_name = oid_field_name
+        self.done_till = done_till
+        self.oid_max = oid_max
+
+    def length(self):
+        return num_chunks(self.done_till, self.oid_max, self.page_size)
+
+    def __iter__(self):
+        for page_min in range(self.done_till, self.oid_max, self.page_size):
+            page_max = min(page_min + self.page_size, self.oid_max)
+            yield self.dumper._build_query_args({
+                'where': '{} > {} AND {} <= {}'.format(
+                    self.oid_field_name,
+                    page_min,
+                    self.oid_field_name,
+                    page_max,
+                ),
+                'geometryPrecision': self.dumper._precision,
+                'returnGeometry': self.dumper._request_geometry,
+                'outSR': self.dumper._outSR,
+                'outFields': ','.join(self.query_fields or ['*']),
+                'f': self.dumper._json_arg,
+            })
+
+
+class OIDEnumerationPager:
+    def __init__(self, dumper, oid_field_name, oids):
+        self.dumper = dumper
+        self.page_size = dumper.get_page_size()
+        self.query_fields = dumper._fields
+
+        self.oid_field_name = oid_field_name
+        self.oids = oids
+
+    def length(self):
+        return num_chunks(0, len(self.oids), self.page_size)
+
+    def __iter__(self):
+        for i in range(0, len(self.oids), self.page_size):
+            oid_chunk = self.oids[i:i+self.page_size]
+            page_min = oid_chunk[0]
+            page_max = oid_chunk[-1]
+            yield self.dumper._build_query_args({
+                'where': '{} >= {} AND {} <= {}'.format(
+                    self.oid_field_name,
+                    page_min,
+                    self.oid_field_name,
+                    page_max,
+                ),
+                'geometryPrecision': self.dumper._precision,
+                'returnGeometry': self.dumper._request_geometry,
+                'outSR': self.dumper._outSR,
+                'outFields': ','.join(self.query_fields or ['*']),
+                'f': self.dumper._json_arg,
+            })
+
