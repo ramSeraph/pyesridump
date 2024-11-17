@@ -635,7 +635,11 @@ class EsriDumper(object):
  
 
 def num_chunks(frm, to, csize):
-    return (to - frm) // csize
+    count = (to - frm) // csize
+    rem   = (to - frm) % csize
+    if rem != 0:
+        count += 1
+    return count
 
 class OffsetPager:
     def __init__(self, dumper, start_with, row_count, query_fields_pagination_support):
