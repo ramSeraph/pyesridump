@@ -78,7 +78,7 @@ class EsriDumper(object):
         self._startWith = start_with or 0
         self._precision = geometry_precision or 7
         self._paginate_oid = paginate_oid
-        self._max_page_size = max_page_size or 1000
+        self._max_page_size = max_page_size or -1
         self._page_size = None
         self._state = state
         self._query_index = 1
@@ -196,7 +196,17 @@ class EsriDumper(object):
     def get_page_size(self):
         if self._page_size is None:
             metadata = self.get_metadata()
-            self._page_size = max(self._max_page_size, metadata.get('maxRecordCount', 500))
+            layer_max_record_count = metadata.get('maxRecordCount')
+            if self._max_page_size == -1:
+                if layer_max_record_count is not None:
+                    self._page_size = layer_max_record_count
+                else:
+                    self._page_size = 1000
+            else:
+                if layer_max_record_count is None:
+                    self._page_size = self._max_page_size
+                else:
+                    self._page_size = min(self._max_page_size, layer_max_record_count)
         return self._page_size
 
     def get_feature_count(self):

@@ -73,8 +73,9 @@ def _parse_args(args):
         help="HTTP timeout in seconds, default 30")
     parser.add_argument("-m", "--max-page-size",
         type=int,
-        default=1000,
-        help="Maximum number of features to pull per batch, default 1000")
+        default=-1,
+        help="Maximum number of features to pull per batch, "
+             "default -1 (means pick from the layer metadata or 1000, whichever is higher)")
     parser.add_argument("--paginate-oid",
         dest='paginate_oid',
         action='store_true',
