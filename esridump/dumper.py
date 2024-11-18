@@ -218,14 +218,19 @@ class EsriDumper(object):
 
     def _find_oid_field_name(self, metadata):
         oid_field_name = metadata.get('objectIdField')
-        if not oid_field_name:
-            for f in metadata['fields']:
-                if f.get('type') == 'esriFieldTypeOID':
-                    oid_field_name = f['name']
-                elif f['name'].lower() == 'objectid':
-                    oid_field_name = f['name']
-                else:
-                    break
+
+        if oid_field_name is not None:
+            return oid_field_name
+
+        for f in metadata['fields']:
+            if f.get('type') == 'esriFieldTypeOID':
+                oid_field_name = f['name']
+                return oid_field_name
+
+        for f in metadata['fields']:
+            if f['name'].lower() == 'objectid':
+                oid_field_name = f['name']
+                return oid_field_name
 
         return oid_field_name
 
