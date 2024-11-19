@@ -18,6 +18,7 @@ class TestEsriDownload(unittest.TestCase):
     def get_dumper(self, **kwargs):
         base_args = {
             'pause_seconds': 0.01,
+            'max_page_size': 500,
         }
         base_args.update(kwargs)
         return EsriDumper(self.fake_url, **base_args)
@@ -454,4 +455,4 @@ class TestEsriDownload(unittest.TestCase):
 
         dump = EsriDumper(self.fake_url, output_format='esrijson')
         data = list(dump)
-        self.assertIn('attributes', data[0], message='Data does not have "attributes" key with output format == esrijson')
+        self.assertIn('attributes', data[0], 'Data does not have "attributes" key with output format == esrijson')
