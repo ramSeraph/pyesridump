@@ -175,7 +175,7 @@ def main():
             with open(state_filename, 'w') as f:
                 f.write(dumper._state.encode())
             logger.info('Done saving state file')
-            raise
+        raise
 
 
 if __name__ == '__main__':
